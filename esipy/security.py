@@ -45,6 +45,11 @@ class EsiSecurity(object):
         SSO authentication. Defaults to tranquility
         :param headers: (optional) additional headers to add to the requests
         done here
+        :param token_update_callbacks: (optional) a list of callbacks that get
+        called if a token gets updated
+        def callback(token_identifier, access_token, refresh_token, expires_epoch)
+        :param token_identifier: (optional) object that gets send to the callback
+         to help it identify the token that got updated
         """
         app = kwargs.pop('app', None)
         sso_url = kwargs.pop('sso_url', "https://login.eveonline.com")
@@ -121,6 +126,9 @@ class EsiSecurity(object):
         self._session.headers.update({"Accept": "application/json"})
         self._session.headers.update(headers)
 
+        self.token_callbacks = kwargs.pop('token_update_callbacks', [])
+        self.token_identifier = kwargs.pop('token_identifier', None)
+
         # token data
         self.refresh_token = None
         self.access_token = None
@@ -158,6 +166,18 @@ class EsiSecurity(object):
         }
 
         return request_params
+
+    def __call_token_update_callbacks(self, access_token, refresh_token, expiry: int):
+        """ Calls the registered callbacks with information about the token update
+
+        :param access_token: the new access_token
+        :param refresh_token: the new refresh_token
+        :param expiry: epoch seconds at which the access token expires
+        :return: None
+        """
+        for callback in self.token_callbacks:
+            callback(self.token_identifier, access_token, refresh_token,
+                     expiry)
 
     def get_auth_uri(self, scopes=None, state=None, implicit=False):
         """ Constructs the full auth uri and returns it.
@@ -210,6 +230,14 @@ class EsiSecurity(object):
             }
         )
 
+    def set_token_identifier(self, token_identifier):
+        """ Sets the token identifier object that is getting passed
+        to callbacks
+
+        :param token_identifier: the token identifier to set
+        """
+        self.token_identifier = token_identifier
+
     def update_token(self, response_json):
         """ Update access_token, refresh_token and token_expiry from the
         response body.
@@ -254,6 +282,7 @@ class EsiSecurity(object):
             )
         json_res = res.json()
         self.update_token(json_res)
+        self.__call_token_update_callbacks(json_res['access_token'], json_res['refresh_token'], self.token_expiry)
         return json_res
 
     def auth(self, code):
@@ -290,6 +319,22 @@ class EsiSecurity(object):
                 res.json()
             )
         return res.json()
+
+    def add_token_update_listener(self, callback):
+        """ Add callback function for token update to the list of callbacks.
+        :param callback: def callback(token_identifier, access_token, refresh_token, expires_epoch)
+        """
+
+        self.token_callbacks.append(callback)
+
+    def remove_token_update_listener(self, callback):
+        """ Remove callback function from the list of callbacks
+
+        :param callback: function to remove
+        """
+
+        if callback in self.token_callbacks:
+            self.token_callbacks.remove(callback)
 
     def __call__(self, request):
         """ Check if the request need security header and apply them.
